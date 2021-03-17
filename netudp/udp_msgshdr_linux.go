@@ -1,11 +1,8 @@
-// +build linux
-// +build amd64
-
-package fastudp
+package netudp
 
 import "unsafe"
 
-// This file content copy from golang.org/x/netinternal/socket/zsys_linux_amd64.go
+// This file content copied from golang.org/x/net/internal/socket/zsys_linux_amd64.go
 // Don't modify only when you know what to do
 
 type iovec struct {
@@ -39,11 +36,11 @@ const (
 	sizeofIovec  = 0x10
 	sizeofMsghdr = 0x38
 
-	sizeofSockaddrInet  = 0x10 // ipv4
-	sizeofSockaddrInet6 = 0x1c // ipv6
+	sizeofSockaddrInet  = 0x10 // IPv4
+	sizeofSockaddrInet6 = 0x1c // IPv6
 )
 
-func readPrepare(n, mtu int) ([]mmsghdr, [][]byte, [][]byte) {
+func prepare(n, mtu int) ([]mmsghdr, [][]byte, [][]byte) {
 	mms := make([]mmsghdr, n)
 	buffers := make([][]byte, n)
 	names := make([][]byte, n)

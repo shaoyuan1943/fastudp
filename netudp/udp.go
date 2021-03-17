@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
-func reusableUDP(network, addr string, reusePort bool) (int, unix.Sockaddr, error) {
+func NewUDPSocket(network, addr string, reusePort bool) (int, unix.Sockaddr, error) {
 	var sa unix.Sockaddr
 	udpAddr, err := net.ResolveUDPAddr(network, addr)
 	if err != nil {
@@ -72,4 +73,13 @@ func reusableUDP(network, addr string, reusePort bool) (int, unix.Sockaddr, erro
 	}
 
 	return fd, sa, nil
+}
+
+func IsUDP(network string) bool {
+	switch strings.ToLower(network) {
+	case "udp", "udp4", "udp6":
+		return true
+	}
+
+	return false
 }
