@@ -1,3 +1,5 @@
+// +build linux
+
 package netudp
 
 import (
@@ -19,6 +21,7 @@ type ReaderWriter struct {
 	names      [][]byte
 	remoteAddr *net.UDPAddr
 	dc         [32]byte
+	mtu        int
 	sockaddr4  unix.RawSockaddrInet4
 	sockaddr6  unix.RawSockaddrInet6
 }
@@ -26,6 +29,7 @@ type ReaderWriter struct {
 func NewRW(fd, n, mtu int) *ReaderWriter {
 	rw := &ReaderWriter{}
 	rw.fd = fd
+	rw.mtu = mtu
 	rw.msgs, rw.buffers, rw.names = prepare(n, mtu)
 	rw.remoteAddr = &net.UDPAddr{}
 	return rw
@@ -132,6 +136,10 @@ func (rw *ReaderWriter) string2ZoneID(zone string) uint32 {
 func (rw *ReaderWriter) WriteTo(addr *net.UDPAddr, data []byte) error {
 	if addr == nil || data == nil {
 		return fmt.Errorf("writeto: data or addr invalid")
+	}
+
+	if len(data) > rw.mtu {
+		return fmt.Errorf("writeto: data length too long")
 	}
 
 	if addr.IP.To4() == nil {

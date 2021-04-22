@@ -1,9 +1,12 @@
+// +build linux
+
 package fastudp
 
 import (
 	"net"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/shaoyuan1943/fastudp/netpoll"
@@ -11,9 +14,15 @@ import (
 )
 
 var (
-	MsgHdrSize    = 128
-	ReadEventSize = 128
+	MsgHdrSize     = 128
+	ReadEventSize  = 128
+	WriteEventSize = 128
 )
+
+type writeP struct {
+	Addr *net.UDPAddr
+	Data []byte
+}
 
 type eventLoop struct {
 	internalLoop
@@ -21,14 +30,15 @@ type eventLoop struct {
 }
 
 type internalLoop struct {
-	l           *listener
-	poller      *netpoll.Poller
-	rw          *netudp.ReaderWriter
-	svr         *Server
-	once        sync.Once
-	readNotifyC chan struct{}
-	reasonErr   error
-	closed      bool
+	l            *listener
+	poller       *netpoll.Poller
+	rw           *netudp.ReaderWriter
+	svr          *Server
+	once         sync.Once
+	readNotifyC  chan struct{}
+	writeNotifyC chan *writeP
+	writePool    sync.Pool
+	closed       atomic.Value
 }
 
 func newEventLoop(s *Server, l *listener, poller *netpoll.Poller, mtu int) *eventLoop {
@@ -37,16 +47,25 @@ func newEventLoop(s *Server, l *listener, poller *netpoll.Poller, mtu int) *even
 	loop.poller = poller
 	loop.rw = netudp.NewRW(l.fd, MsgHdrSize, mtu)
 	loop.svr = s
+	loop.writeNotifyC = make(chan *writeP, WriteEventSize)
 	loop.readNotifyC = make(chan struct{}, ReadEventSize)
+	loop.writePool.New = func() interface{} {
+		p := &writeP{
+			Data: make([]byte, mtu),
+		}
+
+		return p
+	}
+	loop.closed.Store(false)
 	return loop
 }
 
 func (loop *eventLoop) Close(err error) {
 	loop.once.Do(func() {
-		loop.reasonErr = err
 		loop.poller.Close()
 		close(loop.readNotifyC)
-		loop.closed = true
+		loop.closed.Store(true)
+		loop.svr.eventLoopClosed(loop, err)
 	})
 }
 
@@ -75,4 +94,24 @@ func (loop *eventLoop) readLoop() {
 			loop.svr.handler.OnReaded(data, addr)
 		})
 	}
+}
+
+func (loop *eventLoop) writeLoop() {
+	for p := range loop.writeNotifyC {
+		err := loop.rw.WriteTo(p.Addr, p.Data)
+		if err != nil {
+			loop.Close(err)
+			return
+		}
+
+		loop.writePool.Put(p)
+	}
+}
+
+func (loop *eventLoop) writeTo(addr *net.UDPAddr, data []byte) {
+	p := loop.writePool.Get().(*writeP)
+	p.Addr = addr
+	p.Data = p.Data[:len(data)]
+	copy(p.Data, data)
+	loop.writeNotifyC <- p
 }
