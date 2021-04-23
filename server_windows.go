@@ -22,18 +22,19 @@ func NewUDPServer(network, addr string, mtu int, handler EventHandler) (*Server,
 		return nil, fmt.Errorf("unknown network: %v", network)
 	}
 
-	s := &Server{
+	svr := &Server{
 		handler: handler,
 	}
-	s.closed.Store(false)
-	if err := s.start(network, addr, mtu); err != nil {
-		return nil, fmt.Errorf("%v", err)
+
+	if err := svr.start(network, addr, mtu); err != nil {
+		return nil, err
 	}
 
-	return s, nil
+	svr.closed.Store(false)
+	return svr, nil
 }
 
-func (s *Server) start(network, addr string, mtu int) error {
+func (svr *Server) start(network, addr string, mtu int) error {
 	udpAddr, err := net.ResolveUDPAddr(network, addr)
 	if err != nil {
 		return fmt.Errorf("resolve addr: %v", err)
@@ -44,11 +45,11 @@ func (s *Server) start(network, addr string, mtu int) error {
 		return fmt.Errorf("listen udp: %v", err)
 	}
 
-	s.conn = conn
+	svr.conn = conn
 
-	s.wg.Add(1)
+	svr.wg.Add(1)
 	go func() {
-		defer s.wg.Done()
+		defer svr.wg.Done()
 
 		buffer := make([]byte, mtu)
 		for {
@@ -58,7 +59,7 @@ func (s *Server) start(network, addr string, mtu int) error {
 			}
 
 			if n > 0 {
-				s.handler.OnReaded(buffer[:n], remoteAddr.(*net.UDPAddr))
+				svr.handler.OnReaded(buffer[:n], remoteAddr.(*net.UDPAddr))
 			}
 
 		}
@@ -67,24 +68,24 @@ func (s *Server) start(network, addr string, mtu int) error {
 	return nil
 }
 
-func (s *Server) Shutdown(err error) {
-	if s.closed.Load().(bool) {
+func (svr *Server) Shutdown(err error) {
+	if svr.IsClosed() {
 		return
 	}
 
-	s.conn.Close()
-	s.wg.Wait()
-	s.closed.Store(true)
+	svr.conn.Close()
+	svr.wg.Wait()
+	svr.closed.Store(true)
 }
 
-func (s *Server) IsClosed() bool {
-	return s.closed.Load().(bool)
+func (svr *Server) IsClosed() bool {
+	return svr.closed.Load().(bool)
 }
 
-func (s *Server) WriteTo(addr *net.UDPAddr, data []byte) (int, error) {
-	if s.closed.Load().(bool) {
+func (svr *Server) WriteTo(addr *net.UDPAddr, data []byte) (int, error) {
+	if svr.closed.Load().(bool) {
 		return 0, fmt.Errorf("server is closed")
 	}
 
-	return s.conn.WriteTo(data, addr)
+	return svr.conn.WriteTo(data, addr)
 }
