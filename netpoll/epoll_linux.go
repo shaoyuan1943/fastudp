@@ -5,6 +5,7 @@ package netpoll
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"golang.org/x/sys/unix"
 )
@@ -82,8 +83,11 @@ func (poller *Poller) Close() error {
 func (poller *Poller) Polling(eventHandler func(fd int32, ev uint32)) error {
 	evs := make([]unix.EpollEvent, EPollEventSize)
 	for {
-		n, err := unix.EpollWait(poller.fd, evs, 0)
-		if n < 0 && err == unix.EINTR {
+		msec := -1
+		n, err := unix.EpollWait(poller.fd, evs, msec)
+		if n == 0 || (n < 0 && err == unix.EINTR) {
+			msec = -1
+			runtime.Gosched()
 			continue
 		}
 
@@ -91,6 +95,7 @@ func (poller *Poller) Polling(eventHandler func(fd int32, ev uint32)) error {
 			return os.NewSyscallError("epoll_wait", err)
 		}
 
+		msec = 0
 		for i := 0; i < n; i++ {
 			eventHandler(evs[i].Fd, evs[i].Events)
 		}
