@@ -78,8 +78,10 @@ func (loop *eventLoop) run() {
 }
 
 func (loop *eventLoop) pollEvent(fd int32, event uint32) {
-	if fd == int32(loop.l.fd) && netudp.IsUDP(loop.l.network) && !loop.closed {
-		loop.readNotifyC <- struct{}{}
+	if fd == int32(loop.l.fd) && netudp.IsUDP(loop.l.network) {
+		if !loop.closed.Load().(bool) {
+			loop.readNotifyC <- struct{}{}
+		}
 	}
 }
 
