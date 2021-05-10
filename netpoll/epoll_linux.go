@@ -83,6 +83,9 @@ func (poller *Poller) Close() error {
 func (poller *Poller) Polling(eventHandler func(fd int32, ev uint32)) error {
 	evs := make([]unix.EpollEvent, EPollEventSize)
 	for {
+		// See: https://man7.org/linux/man-pages/man2/epoll_pwait2.2.html
+		// In Go, if epoll_wait not return event or interrupted by a signal,
+		// We can hand over to the runtime for scheduling to educe CPU usage
 		msec := -1
 		n, err := unix.EpollWait(poller.fd, evs, msec)
 		if n == 0 || (n < 0 && err == unix.EINTR) {
