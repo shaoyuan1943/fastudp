@@ -14,6 +14,11 @@ import (
 
 var zero [32]byte
 
+type Mmsg struct {
+	Addr *net.UDPAddr
+	Data []byte
+}
+
 type ReaderWriter struct {
 	fd         int
 	msgs       []mmsghdr
@@ -179,4 +184,68 @@ func (rw *ReaderWriter) writeto(data uintptr, dataLen uintptr, flags uintptr, so
 	}
 
 	return nil
+}
+
+func (rw *ReaderWriter) WriteToN(mmsgs ...*Mmsg) (int, error) {
+	writed := 0
+	n := len(mmsgs)
+	mms := make([]mmsghdr, n)
+	for i := 0; i < n; i++ {
+		msg := mmsgs[i]
+		if msg.Addr.IP.To4() == nil {
+			sockaddrInet6 := &unix.RawSockaddrInet6{}
+			sockaddrInet6.Family = unix.AF_INET6
+			sockaddrInet6.Scope_id = rw.string2ZoneID(msg.Addr.Zone)
+			port := (*[2]byte)(unsafe.Pointer(&sockaddrInet6.Port))
+			port[0] = byte(msg.Addr.Port >> 8)
+			port[1] = byte(msg.Addr.Port)
+			copy(sockaddrInet6.Addr[:], msg.Addr.IP)
+
+			l := unsafe.Sizeof(*sockaddrInet6)
+			m := &reflect.SliceHeader{
+				Data: uintptr(unsafe.Pointer(sockaddrInet6)),
+				Cap:  int(l),
+				Len:  int(l),
+			}
+			name := *(*[]byte)(unsafe.Pointer(m))
+			mms[i].Hdr.Name = (*byte)(unsafe.Pointer(&name[0]))
+			mms[i].Hdr.Namelen = uint32(len(name))
+
+			if len(msg.Data) > rw.mtu {
+				msg.Data = msg.Data[:rw.mtu]
+			}
+		} else {
+			sockaddrInet4 := &unix.RawSockaddrInet4{}
+			sockaddrInet4.Family = unix.AF_INET
+			port := (*[2]byte)(unsafe.Pointer(&sockaddrInet4.Port))
+			port[0] = byte(msg.Addr.Port >> 8)
+			port[1] = byte(msg.Addr.Port)
+			copy(rw.sockaddr4.Addr[:], msg.Addr.IP)
+
+			l := unsafe.Sizeof(*sockaddrInet4)
+			m := &reflect.SliceHeader{
+				Data: uintptr(unsafe.Pointer(sockaddrInet4)),
+				Cap:  int(l),
+				Len:  int(l),
+			}
+			name := *(*[]byte)(unsafe.Pointer(m))
+			mms[i].Hdr.Name = (*byte)(unsafe.Pointer(&name[0]))
+			mms[i].Hdr.Namelen = uint32(len(name))
+		}
+
+		v := []iovec{
+			{Base: (*byte)(unsafe.Pointer(&msg.Data[0])), Len: uint64(len(msg.Data))},
+		}
+
+		mms[i].Hdr.Iov = &v[0]
+		mms[i].Hdr.Iovlen = uint64(len(v))
+		writed++
+	}
+
+	_, _, err := unix.Syscall6(unix.SYS_SENDMMSG, uintptr(rw.fd), uintptr(unsafe.Pointer(&mms[0])), uintptr(len(mms)), uintptr(0), 0, 0)
+	if err != 0 {
+		return 0, os.NewSyscallError("sendmmsg", fmt.Errorf("%v", unix.ErrnoName(err)))
+	}
+
+	return writed, nil
 }

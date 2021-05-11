@@ -126,3 +126,19 @@ func (svr *Server) WriteTo(addr *net.UDPAddr, data []byte) (int, error) {
 
 	return len(data), nil
 }
+
+func (svr *Server) WriteToN(mmsgs ...*netudp.Mmsg) (int, error) {
+	if svr.closed.Load().(bool) {
+		return 0, fmt.Errorf("server is closed")
+	}
+
+	svr.Lock()
+	defer svr.Unlock()
+
+	for _, loop := range svr.loops {
+		writed, err := loop.rw.WriteToN(mmsgs...)
+		return writed, err
+	}
+
+	return 0, fmt.Errorf("no usable event loop")
+}
