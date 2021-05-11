@@ -111,7 +111,11 @@ func (svr *Server) eventLoopClosed(loop *eventLoop, err error) {
 }
 
 // TODO: need load balancing?
-func (svr *Server) WriteTo(addr *net.UDPAddr, data []byte) {
+func (svr *Server) WriteTo(addr *net.UDPAddr, data []byte) (int, error) {
+	if svr.closed.Load().(bool) {
+		return 0, fmt.Errorf("server is closed")
+	}
+
 	svr.Lock()
 	defer svr.Unlock()
 
@@ -119,4 +123,6 @@ func (svr *Server) WriteTo(addr *net.UDPAddr, data []byte) {
 		loop.writeTo(addr, data)
 		break
 	}
+
+	return len(data), nil
 }
