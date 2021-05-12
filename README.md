@@ -1,2 +1,2 @@
-# fastudp (linux only)
+# fastudp
 fast and more fast
