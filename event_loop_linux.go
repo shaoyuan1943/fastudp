@@ -172,11 +172,11 @@ func (loop *eventLoop) onEpollout() {
 		step := n / WriteEventSize
 		surplus := n % WriteEventSize
 		if surplus > 0 {
-			if !writeFunc(loop.writeQueue[(n - surplus - 1):n]) {
+			if !writeFunc(loop.writeQueue[(n - surplus):n]) {
 				return
 			}
 
-			putback(loop.writeQueue[(n - surplus - 1):n])
+			putback(loop.writeQueue[(n - surplus):n])
 			loop.writeQueue = loop.writeQueue[:(n - surplus)]
 			loop.poller.Mod(int(loop.l.fd), "r")
 		}
