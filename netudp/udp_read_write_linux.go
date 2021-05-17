@@ -138,7 +138,7 @@ func (rw *ReaderWriter) string2ZoneID(zone string) uint32 {
 	return uint32(n)
 }
 
-func (rw *ReaderWriter) WriteTo(addr *net.UDPAddr, data []byte) error {
+func (rw *ReaderWriter) WriteTo(data []byte, addr *net.UDPAddr) error {
 	if addr == nil || data == nil {
 		return fmt.Errorf("writeto: data or addr invalid")
 	}
@@ -148,13 +148,13 @@ func (rw *ReaderWriter) WriteTo(addr *net.UDPAddr, data []byte) error {
 	}
 
 	if addr.IP.To4() == nil {
-		return rw.writeToIPv6(addr, data)
+		return rw.writeToIPv6(data, addr)
 	}
 
-	return rw.writeToIPv4(addr, data)
+	return rw.writeToIPv4(data, addr)
 }
 
-func (rw *ReaderWriter) writeToIPv4(addr *net.UDPAddr, data []byte) error {
+func (rw *ReaderWriter) writeToIPv4(data []byte, addr *net.UDPAddr) error {
 	rw.sockaddr4.Family = unix.AF_INET
 	port := (*[2]byte)(unsafe.Pointer(&rw.sockaddr4.Port))
 	port[0] = byte(addr.Port >> 8)
@@ -165,7 +165,7 @@ func (rw *ReaderWriter) writeToIPv4(addr *net.UDPAddr, data []byte) error {
 	return rw.writeto(uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)), uintptr(0), uintptr(unsafe.Pointer(&rw.sockaddr4)), uintptr(unix.SizeofSockaddrInet4))
 }
 
-func (rw *ReaderWriter) writeToIPv6(addr *net.UDPAddr, data []byte) error {
+func (rw *ReaderWriter) writeToIPv6(data []byte, addr *net.UDPAddr) error {
 	rw.sockaddr6.Family = unix.AF_INET6
 	rw.sockaddr6.Scope_id = rw.string2ZoneID(addr.Zone)
 	port := (*[2]byte)(unsafe.Pointer(&rw.sockaddr6.Port))

@@ -4,6 +4,7 @@ package fastudp
 
 import (
 	"net"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/shaoyuan1943/fastudp/netpoll"
 	"github.com/shaoyuan1943/fastudp/netudp"
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -19,26 +21,22 @@ var (
 	WriteEventSize = 128
 )
 
-type writeP struct {
-	Addr *net.UDPAddr
-	Data []byte
-}
-
 type eventLoop struct {
 	internalLoop
 	_ [64 - unsafe.Sizeof(internalLoop{})%64]byte
 }
 
 type internalLoop struct {
-	l            *listener
-	poller       *netpoll.Poller
-	rw           *netudp.ReaderWriter
-	svr          *Server
-	once         sync.Once
-	readNotifyC  chan struct{}
-	writeNotifyC chan *writeP
-	writePool    sync.Pool
-	closed       atomic.Value
+	l           *listener
+	poller      *netpoll.Poller
+	rw          *netudp.ReaderWriter
+	svr         *Server
+	once        sync.Once
+	readNotifyC chan struct{}
+	writePool   sync.Pool
+	closed      atomic.Value
+	writeQueue  []*netudp.Mmsg
+	sync.Locker
 }
 
 func newEventLoop(s *Server, l *listener, poller *netpoll.Poller, mtu int) *eventLoop {
@@ -47,15 +45,16 @@ func newEventLoop(s *Server, l *listener, poller *netpoll.Poller, mtu int) *even
 	loop.poller = poller
 	loop.rw = netudp.NewRW(l.fd, MsgHdrSize, mtu)
 	loop.svr = s
-	loop.writeNotifyC = make(chan *writeP, WriteEventSize)
 	loop.readNotifyC = make(chan struct{}, ReadEventSize)
 	loop.writePool.New = func() interface{} {
-		p := &writeP{
+		p := &netudp.Mmsg{
 			Data: make([]byte, mtu),
 		}
 
 		return p
 	}
+	loop.writeQueue = make([]*netudp.Mmsg, WriteEventSize)
+	loop.writeQueue = loop.writeQueue[:0]
 	loop.closed.Store(false)
 	return loop
 }
@@ -77,10 +76,16 @@ func (loop *eventLoop) run() {
 	loop.Close(err)
 }
 
-func (loop *eventLoop) pollEvent(fd int32, event uint32) {
+func (loop *eventLoop) pollEvent(fd int32, events uint32) {
 	if fd == int32(loop.l.fd) && netudp.IsUDP(loop.l.network) {
 		if !loop.closed.Load().(bool) {
-			loop.readNotifyC <- struct{}{}
+			if events&unix.EPOLLIN != 0 {
+				loop.readNotifyC <- struct{}{}
+			}
+
+			if events&unix.EPOLLOUT != 0 {
+				loop.onEpollout()
+			}
 		}
 	}
 }
@@ -98,22 +103,96 @@ func (loop *eventLoop) readLoop() {
 	}
 }
 
-func (loop *eventLoop) writeLoop() {
-	for p := range loop.writeNotifyC {
-		err := loop.rw.WriteTo(p.Addr, p.Data)
-		if err != nil {
-			loop.Close(err)
-			return
-		}
+func (loop *eventLoop) writeTo(data []byte, addr *net.UDPAddr) {
+	err := loop.rw.WriteTo(data, addr)
+	if err != nil {
+		errno := err.(*os.SyscallError).Unwrap()
+		if errno.Error() == "EINTR" || errno.Error() == "EAGIN" {
+			loop.Lock()
+			defer loop.Unlock()
 
-		loop.writePool.Put(p)
+			p := loop.writePool.Get().(*netudp.Mmsg)
+			p.Addr = addr
+			p.Data = p.Data[:len(data)]
+			copy(p.Data, data)
+
+			loop.writeQueue = append(loop.writeQueue, p)
+			loop.poller.Mod(int(loop.l.fd), "rw")
+		} else {
+			loop.Close(err)
+		}
 	}
 }
 
-func (loop *eventLoop) writeTo(addr *net.UDPAddr, data []byte) {
-	p := loop.writePool.Get().(*writeP)
-	p.Addr = addr
-	p.Data = p.Data[:len(data)]
-	copy(p.Data, data)
-	loop.writeNotifyC <- p
+func (loop *eventLoop) onEpollout() {
+	n := len(loop.writeQueue)
+	if n <= 0 {
+		return
+	}
+
+	writeFunc := func(mmsgs []*netudp.Mmsg) (writed bool) {
+		if len(mmsgs) > 0 {
+			_, err := loop.rw.WriteToN(mmsgs...)
+			if err != nil {
+				errno := err.(*os.SyscallError).Unwrap()
+				if errno.Error() == "EINTR" || errno.Error() == "EAGIN" {
+					loop.poller.Mod(int(loop.l.fd), "rw")
+					writed = false
+					return
+				}
+
+				loop.Close(err)
+				writed = false
+				return
+			}
+		}
+
+		writed = true
+		return
+	}
+
+	putback := func(mmsgs []*netudp.Mmsg) {
+		for i := 0; i < len(mmsgs); i++ {
+			loop.writePool.Put(mmsgs[i])
+		}
+	}
+
+	loop.Lock()
+	defer loop.Unlock()
+
+	if n <= WriteEventSize {
+		if !writeFunc(loop.writeQueue) {
+			return
+		}
+
+		putback(loop.writeQueue)
+		loop.writeQueue = loop.writeQueue[:0]
+		loop.poller.Mod(int(loop.l.fd), "r")
+	} else {
+		step := n / WriteEventSize
+		surplus := n % WriteEventSize
+		if surplus > 0 {
+			if !writeFunc(loop.writeQueue[(n - surplus - 1):n]) {
+				return
+			}
+
+			putback(loop.writeQueue[(n - surplus - 1):n])
+			loop.writeQueue = loop.writeQueue[:(n - surplus)]
+			loop.poller.Mod(int(loop.l.fd), "r")
+		}
+
+		n := len(loop.writeQueue)
+		step--
+		for step >= 0 {
+			if !writeFunc(loop.writeQueue[step*WriteEventSize : n]) {
+				return
+			}
+
+			putback(loop.writeQueue[step*WriteEventSize : n])
+			loop.writeQueue = loop.writeQueue[:step*WriteEventSize]
+			loop.poller.Mod(int(loop.l.fd), "r")
+			n = len(loop.writeQueue)
+			step--
+		}
+	}
 }

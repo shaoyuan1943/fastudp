@@ -41,11 +41,11 @@ func (poller *Poller) Add(fd int, ev string) error {
 
 	switch ev {
 	case "r":
-		e.Events = unix.EPOLLIN
+		e.Events = unix.EPOLLIN | unix.EPOLLET
 	case "w":
-		e.Events = unix.EPOLLOUT
+		e.Events = unix.EPOLLOUT | unix.EPOLLET
 	case "rw":
-		e.Events = unix.EPOLLIN | unix.EPOLLOUT
+		e.Events = unix.EPOLLIN | unix.EPOLLOUT | unix.EPOLLET
 	default:
 		return fmt.Errorf("unknow epoll event type")
 	}
@@ -60,11 +60,11 @@ func (poller *Poller) Mod(fd int, ev string) error {
 
 	switch ev {
 	case "r":
-		e.Events = unix.EPOLLIN
+		e.Events = unix.EPOLLIN | unix.EPOLLET
 	case "w":
-		e.Events = unix.EPOLLOUT
+		e.Events = unix.EPOLLOUT | unix.EPOLLET
 	case "rw":
-		e.Events = unix.EPOLLIN | unix.EPOLLOUT
+		e.Events = unix.EPOLLIN | unix.EPOLLOUT | unix.EPOLLET
 	default:
 		return fmt.Errorf("unknow epoll event type")
 	}

@@ -72,7 +72,6 @@ func (s *Server) start(network, addr string, reusePort bool, listenerN, mtu int)
 
 		go loop.run()
 		go loop.readLoop()
-		go loop.writeLoop()
 
 		s.wg.Add(1)
 	}
@@ -111,34 +110,18 @@ func (svr *Server) eventLoopClosed(loop *eventLoop, err error) {
 }
 
 // TODO: need load balancing?
-func (svr *Server) WriteTo(addr *net.UDPAddr, data []byte) (int, error) {
+func (svr *Server) WriteTo(data []byte, addr *net.UDPAddr) {
 	if svr.closed.Load().(bool) {
-		return 0, fmt.Errorf("server is closed")
+		return
 	}
 
+	var loop *eventLoop
 	svr.Lock()
-	defer svr.Unlock()
-
-	for _, loop := range svr.loops {
-		loop.writeTo(addr, data)
+	for _, l := range svr.loops {
+		loop = l
 		break
 	}
+	svr.Unlock()
 
-	return len(data), nil
-}
-
-func (svr *Server) WriteToN(mmsgs ...*netudp.Mmsg) (int, error) {
-	if svr.closed.Load().(bool) {
-		return 0, fmt.Errorf("server is closed")
-	}
-
-	svr.Lock()
-	defer svr.Unlock()
-
-	for _, loop := range svr.loops {
-		writed, err := loop.rw.WriteToN(mmsgs...)
-		return writed, err
-	}
-
-	return 0, fmt.Errorf("no usable event loop")
+	loop.writeTo(data, addr)
 }
