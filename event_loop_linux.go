@@ -77,6 +77,9 @@ func (loop *eventLoop) run() {
 	loop.Close(err)
 }
 
+// Epoll return current status of fd,
+// EPOLLOUT will only be returned when the fd's status changes from "cannnot ouput" to "can ouput",
+// More information: https://www.spinics.net/lists/linux-api/msg01872.html
 func (loop *eventLoop) pollEvent(fd int32, events uint32) {
 	if fd == int32(loop.l.fd) && netudp.IsUDP(loop.l.network) {
 		if !loop.closed.Load().(bool) {
