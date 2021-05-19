@@ -61,6 +61,7 @@ func newEventLoop(s *Server, l *listener, poller *netpoll.Poller, mtu int) *even
 
 func (loop *eventLoop) Close(err error) {
 	loop.once.Do(func() {
+		loop.poller.Del(loop.l.fd)
 		loop.poller.Close()
 		close(loop.readNotifyC)
 		loop.closed.Store(true)

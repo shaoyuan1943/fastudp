@@ -74,6 +74,7 @@ func (rw *ReaderWriter) ReadFrom(readFunc func([]byte, *net.UDPAddr, error)) {
 	}
 }
 
+// See: https://www.man7.org/linux/man-pages/man2/recvmmsg.2.html
 func (rw *ReaderWriter) read() (int, error) {
 	n, _, err := unix.Syscall6(unix.SYS_RECVMMSG, uintptr(rw.fd),
 		uintptr(unsafe.Pointer(&rw.msgs[0])), uintptr(len(rw.msgs)), unix.MSG_WAITFORONE,
@@ -186,6 +187,7 @@ func (rw *ReaderWriter) writeto(data uintptr, dataLen uintptr, flags uintptr, so
 	return nil
 }
 
+// See: https://man7.org/linux/man-pages/man2/sendmmsg.2.html
 func (rw *ReaderWriter) WriteToN(mmsgs ...*Mmsg) (int, error) {
 	writed := 0
 	n := len(mmsgs)
