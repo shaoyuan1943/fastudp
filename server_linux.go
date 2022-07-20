@@ -107,12 +107,16 @@ func (svr *Server) eventLoopClosed(loop *eventLoop, err error) {
 
 	delete(svr.loops, loop.l.fd)
 	svr.wg.Done()
+
+	if err != nil {
+		svr.handler.OnError(err)
+	}
 }
 
 // TODO: need load balancing?
-func (svr *Server) WriteTo(data []byte, addr *net.UDPAddr) {
+func (svr *Server) WriteTo(data []byte, addr *net.UDPAddr) (int, error) {
 	if svr.closed.Load().(bool) {
-		return
+		return 0, fmt.Errorf("server closed")
 	}
 
 	var loop *eventLoop
@@ -123,5 +127,5 @@ func (svr *Server) WriteTo(data []byte, addr *net.UDPAddr) {
 	}
 	svr.Unlock()
 
-	loop.writeTo(data, addr)
+	return loop.writeTo(data, addr)
 }

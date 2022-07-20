@@ -107,7 +107,7 @@ func (loop *eventLoop) readLoop() {
 	}
 }
 
-func (loop *eventLoop) writeTo(data []byte, addr *net.UDPAddr) {
+func (loop *eventLoop) writeTo(data []byte, addr *net.UDPAddr) (int, error) {
 	err := loop.rw.WriteTo(data, addr)
 	if err != nil {
 		errno := err.(*os.SyscallError).Unwrap()
@@ -121,11 +121,14 @@ func (loop *eventLoop) writeTo(data []byte, addr *net.UDPAddr) {
 			copy(p.Data, data)
 
 			loop.writeQueue = append(loop.writeQueue, p)
-			loop.poller.Mod(int(loop.l.fd), "rw")
+			loop.poller.Mod(loop.l.fd, "rw")
+			err = errno
 		} else {
 			loop.Close(err)
 		}
 	}
+
+	return len(data), err
 }
 
 func (loop *eventLoop) onEpollout() {
@@ -140,7 +143,7 @@ func (loop *eventLoop) onEpollout() {
 			if err != nil {
 				errno := err.(*os.SyscallError).Unwrap()
 				if errno.Error() == "EINTR" || errno.Error() == "EAGIN" {
-					loop.poller.Mod(int(loop.l.fd), "rw")
+					loop.poller.Mod(loop.l.fd, "rw")
 					writed = false
 					return
 				}
@@ -171,7 +174,7 @@ func (loop *eventLoop) onEpollout() {
 
 		putback(loop.writeQueue)
 		loop.writeQueue = loop.writeQueue[:0]
-		loop.poller.Mod(int(loop.l.fd), "r")
+		loop.poller.Mod(loop.l.fd, "r")
 	} else {
 		step := n / WriteEventSize
 		surplus := n % WriteEventSize
@@ -182,7 +185,7 @@ func (loop *eventLoop) onEpollout() {
 
 			putback(loop.writeQueue[(n - surplus):n])
 			loop.writeQueue = loop.writeQueue[:(n - surplus)]
-			loop.poller.Mod(int(loop.l.fd), "r")
+			loop.poller.Mod(loop.l.fd, "r")
 		}
 
 		n := len(loop.writeQueue)
@@ -194,7 +197,7 @@ func (loop *eventLoop) onEpollout() {
 
 			putback(loop.writeQueue[step*WriteEventSize : n])
 			loop.writeQueue = loop.writeQueue[:step*WriteEventSize]
-			loop.poller.Mod(int(loop.l.fd), "r")
+			loop.poller.Mod(loop.l.fd, "r")
 			n = len(loop.writeQueue)
 			step--
 		}

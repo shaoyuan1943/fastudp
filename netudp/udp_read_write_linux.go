@@ -194,7 +194,7 @@ func (rw *ReaderWriter) WriteToN(mmsgs ...*Mmsg) (int, error) {
 	mms := make([]mmsghdr, n)
 	for i := 0; i < n; i++ {
 		msg := mmsgs[i]
-		if msg.Addr.IP.To4() == nil {
+		if msg.Addr.IP.To4() == nil { // IPv6
 			sockaddrInet6 := &unix.RawSockaddrInet6{}
 			sockaddrInet6.Family = unix.AF_INET6
 			sockaddrInet6.Scope_id = rw.string2ZoneID(msg.Addr.Zone)
@@ -216,7 +216,7 @@ func (rw *ReaderWriter) WriteToN(mmsgs ...*Mmsg) (int, error) {
 			if len(msg.Data) > rw.mtu {
 				msg.Data = msg.Data[:rw.mtu]
 			}
-		} else {
+		} else { // IPv4
 			sockaddrInet4 := &unix.RawSockaddrInet4{}
 			sockaddrInet4.Family = unix.AF_INET
 			port := (*[2]byte)(unsafe.Pointer(&sockaddrInet4.Port))
