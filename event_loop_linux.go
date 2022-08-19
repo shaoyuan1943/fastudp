@@ -10,9 +10,10 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/shaoyuan1943/fastudp/netpoll"
 	"github.com/shaoyuan1943/fastudp/netudp"
-	"golang.org/x/sys/unix"
 )
 
 var (
@@ -131,34 +132,40 @@ func (loop *eventLoop) writeTo(data []byte, addr *net.UDPAddr) (int, error) {
 	return len(data), err
 }
 
+// write return value
+const (
+	retry   = 1 << iota
+	failed  = 1 << iota
+	succeed = 1 << iota
+)
+
 func (loop *eventLoop) onEpollout() {
 	n := len(loop.writeQueue)
 	if n <= 0 {
 		return
 	}
 
-	writeFunc := func(mmsgs []*netudp.Mmsg) (writed bool) {
+	writeFunc := func(mmsgs []*netudp.Mmsg) (writed int) {
 		if len(mmsgs) > 0 {
 			_, err := loop.rw.WriteToN(mmsgs...)
 			if err != nil {
 				errno := err.(*os.SyscallError).Unwrap()
 				if errno.Error() == "EINTR" || errno.Error() == "EAGIN" {
-					loop.poller.Mod(loop.l.fd, "rw")
-					writed = false
+					writed = retry
 					return
 				}
 
 				loop.Close(err)
-				writed = false
+				writed = failed
 				return
 			}
 		}
 
-		writed = true
+		writed = succeed
 		return
 	}
 
-	putback := func(mmsgs []*netudp.Mmsg) {
+	returnBackFunc := func(mmsgs []*netudp.Mmsg) {
 		for i := 0; i < len(mmsgs); i++ {
 			loop.writePool.Put(mmsgs[i])
 		}
@@ -168,38 +175,43 @@ func (loop *eventLoop) onEpollout() {
 	defer loop.Unlock()
 
 	if n <= WriteEventSize {
-		if !writeFunc(loop.writeQueue) {
+		switch writeFunc(loop.writeQueue) {
+		case retry:
+		case failed:
 			return
+		case succeed:
+			returnBackFunc(loop.writeQueue)
+			loop.writeQueue = loop.writeQueue[:0]
 		}
-
-		putback(loop.writeQueue)
-		loop.writeQueue = loop.writeQueue[:0]
-		loop.poller.Mod(loop.l.fd, "r")
 	} else {
 		step := n / WriteEventSize
 		surplus := n % WriteEventSize
 		if surplus > 0 {
-			if !writeFunc(loop.writeQueue[(n - surplus):n]) {
+			switch writeFunc(loop.writeQueue[(n - surplus):n]) {
+			case retry:
+			case failed:
 				return
+			case succeed:
+				returnBackFunc(loop.writeQueue[(n - surplus):n])
+				loop.writeQueue = loop.writeQueue[:(n - surplus)]
 			}
-
-			putback(loop.writeQueue[(n - surplus):n])
-			loop.writeQueue = loop.writeQueue[:(n - surplus)]
-			loop.poller.Mod(loop.l.fd, "r")
 		}
 
 		n := len(loop.writeQueue)
 		step--
 		for step >= 0 {
-			if !writeFunc(loop.writeQueue[step*WriteEventSize : n]) {
+			switch writeFunc(loop.writeQueue[step*WriteEventSize : n]) {
+			case retry:
+			case failed:
 				return
+			case succeed:
+				returnBackFunc(loop.writeQueue[step*WriteEventSize : n])
+				loop.writeQueue = loop.writeQueue[:step*WriteEventSize]
+				n = len(loop.writeQueue)
+				step--
 			}
-
-			putback(loop.writeQueue[step*WriteEventSize : n])
-			loop.writeQueue = loop.writeQueue[:step*WriteEventSize]
-			loop.poller.Mod(loop.l.fd, "r")
-			n = len(loop.writeQueue)
-			step--
 		}
 	}
+
+	loop.poller.Mod(loop.l.fd, "rw")
 }
