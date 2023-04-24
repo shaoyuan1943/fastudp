@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package netudp
@@ -52,10 +53,12 @@ func (rw *ReaderWriter) ReadFrom(readFunc func([]byte, *net.UDPAddr, error)) {
 		afNet := (*sockaddrFamily)(unsafe.Pointer((*reflect.SliceHeader)(unsafe.Pointer(&familyData)).Data))
 		switch afNet.Family {
 		case unix.AF_INET:
+			rw.names[i][2], rw.names[i][3] = rw.names[i][3], rw.names[i][2] //字节序转换
 			sockaddrInet := (*unix.RawSockaddrInet4)(unsafe.Pointer((*reflect.SliceHeader)(unsafe.Pointer(&rw.names[i])).Data))
 			rw.remoteAddr.IP = sockaddrInet.Addr[:]
 			rw.remoteAddr.Port = int(sockaddrInet.Port)
 		case unix.AF_INET6:
+			rw.names[i][2], rw.names[i][3] = rw.names[i][3], rw.names[i][2] //字节序转换
 			sockaddrInet6 := (*unix.RawSockaddrInet6)(unsafe.Pointer((*reflect.SliceHeader)(unsafe.Pointer(&rw.names[i])).Data))
 			rw.remoteAddr.IP = sockaddrInet6.Addr[:]
 			rw.remoteAddr.Port = int(sockaddrInet6.Port)
