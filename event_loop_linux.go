@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package fastudp
@@ -70,9 +71,11 @@ func (loop *eventLoop) Close(err error) {
 	})
 }
 
-func (loop *eventLoop) run() {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
+func (loop *eventLoop) run(lockThread bool) {
+	if lockThread {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+	}
 
 	err := loop.poller.Polling(loop.pollEvent)
 	loop.Close(err)
