@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package fastudp
@@ -14,24 +15,26 @@ import (
 )
 
 type Server struct {
-	wg      sync.WaitGroup
-	handler EventHandler
-	loops   map[int]*eventLoop
-	wp      chan []byte
-	pool    sync.Pool
-	closed  atomic.Value
+	wg         sync.WaitGroup
+	handler    EventHandler
+	loops      map[int]*eventLoop
+	wp         chan []byte
+	pool       sync.Pool
+	closed     atomic.Value
+	lockThread bool
 	sync.Mutex
 }
 
-func NewUDPServer(network, addr string, reusePort bool, listenerN int, mtu int, handler EventHandler) (*Server, error) {
+func NewUDPServer(network, addr string, reusePort bool, listenerN int, mtu int, handler EventHandler, enableLockThread bool) (*Server, error) {
 	if !netudp.IsUDP(network) {
 		return nil, fmt.Errorf("unknown network: %v", network)
 	}
 
 	svr := &Server{
-		handler: handler,
-		loops:   make(map[int]*eventLoop),
-		wp:      make(chan []byte, WriteEventSize),
+		handler:    handler,
+		loops:      make(map[int]*eventLoop),
+		wp:         make(chan []byte, WriteEventSize),
+		lockThread: enableLockThread,
 	}
 
 	svr.pool.New = func() interface{} {
@@ -70,7 +73,7 @@ func (s *Server) start(network, addr string, reusePort bool, listenerN, mtu int)
 		s.loops[loop.l.fd] = loop
 		poller.Add(loop.l.fd, "r")
 
-		go loop.run()
+		go loop.run(s.lockThread)
 		go loop.readLoop()
 
 		s.wg.Add(1)
@@ -126,6 +129,10 @@ func (svr *Server) WriteTo(data []byte, addr *net.UDPAddr) (int, error) {
 		break
 	}
 	svr.Unlock()
+
+	if loop == nil {
+		return 0, fmt.Errorf("not found valid event-loop")
+	}
 
 	return loop.writeTo(data, addr)
 }
